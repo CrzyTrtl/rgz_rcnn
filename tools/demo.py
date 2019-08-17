@@ -7,11 +7,17 @@
 #    modify it under the MIT license
 #
 #    Created on 15 March 2018 by chen.wu@icrar.org
+#    
+#    Modified by Vinay Kerai (22465472@student.uwa.edu.au) 
 
 import os, sys, time
 import os.path as osp
 import argparse
 from itertools import cycle
+
+import xml.etree.ElementTree as ET
+import csv
+import pandas as pd
 
 import numpy as np
 import matplotlib
@@ -34,6 +40,68 @@ CLASSES =  ('__background__', # always index 0
                             '1_1', '1_2', '1_3', '2_2', '2_3', '3_3')
 
 colors_ = cycle(['cyan', 'yellow', 'magenta'])
+colors_2 = ['cyan', 'yellow', 'magenta', 'green', 'blue', 'orange', 'darkviolet', 'springgreen', 'teal', 'hotpink', 'tab:brown']
+
+
+#Set this to be the path to rgz_rcnn folder
+path_U = os.path.dirname(os.getcwd())
+
+ground_truth = {'_image':[], 'act_class': [], 'act_xmin':[], 'act_ymin':[], 'act_xmax':[], 'act_ymax':[]} 
+predict = {'pred_class': [], 'score': [], 'pred_xmin':[], 'pred_ymin':[], 'pred_xmax':[], 'pred_ymax':[], '~IoU': []} 
+
+
+#Adds an entry of ground truth values to ground_truth
+def add_to_dict(image):
+    
+    ground_truth["_image"].append(image)
+
+    fullname = os.path.join(path_U, 'data/RGZdevkit2017/RGZ2017/Annotations', image + '.xml')
+    tree = ET.parse(fullname)
+    root = tree.getroot()
+
+    #Get ground truth and add to table 
+    for obj in root.findall('object'):
+        ground_truth['act_class'].append(obj.find('name').text)  
+        for box in obj.findall('bndbox'):
+            ground_truth['act_xmin'].append(float(box.find('xmin').text) * (600.0/132.0) )
+            ground_truth['act_xmax'].append(float(box.find('xmax').text) * (600.0/132.0) )    
+            ground_truth['act_ymin'].append(float(box.find('ymin').text) * (600.0/132.0) )
+            ground_truth['act_ymax'].append(float(box.find('ymax').text) * (600.0/132.0) ) 
+
+#Writes a dictionary to a csv file
+def dict_to_csv(dict):
+
+    keys = sorted(dict.keys())
+    print(dict) 
+    with open("intern/" + subset + "_table.csv", "a+") as outfile:
+        writer = csv.writer(outfile, delimiter = ",")
+        #writer.writerow(keys)
+        writer.writerows(zip(*[dict[key] for key in keys]))
+
+## Computes the intersection over union given two bounding boxes 
+## code sourced from https://www.pyimagesearch.com/2016/11/07/intersection-over-union-iou-for-object-detection/
+def bb_iou(boxA, boxB):
+    # determine the (x, y)-coordinates of the intersection rectangle
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
+
+    # compute the area of intersection rectangle
+    interArea = max(0, xB - xA + 1) * max(0, yB - yA + 1)
+
+    # compute the area of both the prediction and ground-truth
+    # rectangles
+    boxAArea = (boxA[2] - boxA[0] + 1) * (boxA[3] - boxA[1] + 1)
+    boxBArea = (boxB[2] - boxB[0] + 1) * (boxB[3] - boxB[1] + 1)
+
+    # compute the intersection over union by taking the intersection
+    # area and dividing it by the sum of prediction + ground-truth
+    # areas - the interesection area
+    iou = interArea / float(boxAArea + boxBArea - interArea)
+
+    # return the intersection over union value
+    return iou
 
 def vis_detections(im, class_name, dets,ax, thresh=0.5):
     """Draw detected bounding boxes."""
@@ -83,8 +151,11 @@ def vis_detections_new(im, class_name, dets, ax, thresh=0.5):
         inds = np.where(dets[:, -2] >= thresh)[0]
 
     for i in inds:
+        
         bbox = dets[i, :4]
         score = dets[i, -2]
+        
+
         if (class_name is None):
             class_name = CLASSES[int(dets[i, -1])]
 
@@ -101,17 +172,65 @@ def vis_detections_new(im, class_name, dets, ax, thresh=0.5):
                 bbox=dict(facecolor='None', alpha=0.4, edgecolor='None'),
                 fontsize=11, color='black')
 
-    # ax.set_title(('{} detections with '
-    #               'p({} | box) >= {:.1f}').format(class_name, class_name,
-    #                                               thresh),
-    #               fontsize=14)
-    plt.axis('off')
+        #ax.set_title(('{} detections with ' + 'p({} | box) >= {:.1f}').format(class_name, class_name,thresh),
+         #       fontsize=14)
+    
     #plt.tight_layout()
-    plt.draw()
+    #plt.draw()
     return len(inds)
 
+def plt_detections(im, class_name, dets, ax, bboxs, thresh=0.5):
+    """Draw detected bounding boxes."""
+    inds = np.where(dets[:, -1] >= thresh)[0]
+    if len(inds) == 0:
+    
+        return len(inds)
+    
+    bbox = dets[inds[0], :4]
+    score = dets[inds[0], -1]
+
+    #Add ClaRAN's prediction to dictionary
+    predict['pred_class'].append(class_name)
+    predict['score'].append(score)
+    predict['pred_xmin'].append(bbox[0])
+    predict['pred_ymin'].append(bbox[1])
+    predict['pred_xmax'].append(bbox[2])
+    predict['pred_ymax'].append(bbox[3])
+    
+    #Draw ground truth boxes
+    for i in range(len(ground_truth['act_xmin'])): 
+        ax.add_patch(
+            plt.Rectangle((ground_truth['act_xmin'][i], ground_truth['act_ymin'][i]),
+                        ground_truth['act_xmax'][i] - ground_truth['act_xmin'][i],
+                        ground_truth['act_ymax'][i] - ground_truth['act_ymin'][i], fill=False,
+                        edgecolor='gray', linewidth=2.0, linestyle='--')
+         )    
+
+    #Draw proposed boxes
+    for a_box in range(np.shape(bboxs)[0]): 
+
+        bbox = bboxs[a_box, :4]
+        ax.add_patch(
+            plt.Rectangle((bbox[0], bbox[1]),
+                        bbox[2] - bbox[0],
+                        bbox[3] - bbox[1], fill=False,
+                        edgecolor=colors_2[a_box], linewidth=1.0)
+            )
+        
+        #Adds IoU value to top left corner of each box 
+        #gt = ground_truth['act_xmin'] + ground_truth['act_ymin'] + ground_truth['act_xmax'] + ground_truth['act_ymax']
+        #ax.text(bbox[0], bbox[1], str(round(bb_iou(gt, bbox),2)), fontsize=5, color='black') 
+    
+    bbox = dets[inds[:], :4] 
+    
+    #ClaRAN bbox choice IoU
+    #predict['~IoU'].append(bb_iou(gt, bbox)) 
+
+    return len(inds)
+
+
 def demo(sess, net, im_file, vis_file, fits_fn, 
-         conf_thresh=0.8, eval_class=True, extra_vis_png=False):
+         conf_thresh=0.8, eval_class=True, extra_vis_png=False, plot=False):
     """
     Detect object classes in an image using pre-computed object proposals.
     im_file:    The "fused" image file path
@@ -123,10 +242,16 @@ def demo(sess, net, im_file, vis_file, fits_fn,
 
     """
     show_img_size = cfg.TEST.SCALES[0]
+
     if (not os.path.exists(im_file)):
         print('%s cannot be found' % (im_file))
+        
         return -1
+    
+    # Add ground truth values to dictionary
     im = cv2.imread(im_file)
+    im_file_name = im_file[5:26]
+    add_to_dict(im_file_name)
 
     # Detect all object classes and regress object bounds
     timer = Timer()
@@ -138,22 +263,31 @@ def demo(sess, net, im_file, vis_file, fits_fn,
     timer.toc()
     sys.stdout.write('Done in {:.3f} secs'.format(timer.total_time))
     sys.stdout.flush()
-    print(scores)
 
     im = cv2.imread(vis_file)
 
     my_dpi = 100
     fig = plt.figure()
-    fig.set_size_inches(show_img_size / my_dpi, show_img_size / my_dpi)
-    ax = plt.Axes(fig, [0., 0., 1., 1.])
+
+    if plot: 
+        fig.set_size_inches(show_img_size / my_dpi * 2, show_img_size / my_dpi)
+        fig.suptitle(im_file_name, fontsize = 18)
+        ax = fig.add_subplot(1, 2, 1) 
+    else: 
+        fig.set_size_inches(show_img_size / my_dpi, show_img_size / my_dpi)
+        ax = plt.Axes(fig, [0., 0., 1., 1.])
+
+    im = cv2.resize(im, (show_img_size, show_img_size))
+    im = im[:, :, (2, 1, 0)]
+
+    ax.axis('off')
     ax.set_axis_off()
     fig.add_axes(ax)
     ax.set_xlim([0, show_img_size])
     ax.set_ylim([show_img_size, 0])
-    #ax.set_aspect('equal')
-    im = cv2.resize(im, (show_img_size, show_img_size))
-    im = im[:, :, (2, 1, 0)]
-    ax.imshow(im, aspect='equal')
+
+    ax.imshow(im, aspect='equal')  
+
     if ((fits_fn is not None) and (not extra_vis_png)):
         patch_contour = fuse(fits_fn, im, None, sigma_level=4, mask_ir=False,
                              get_path_patch_only=True)
@@ -164,16 +298,34 @@ def demo(sess, net, im_file, vis_file, fits_fn,
     bbox_img = []
     bscore_img = []
     num_sources = 0
+
     #if (eval_class):
     for cls_ind, cls in enumerate(CLASSES[1:]):
         cls_ind += 1 # because we skipped background
         cls_boxes = boxes[:, 4 * cls_ind : 4 * (cls_ind + 1)]
-        cls_scores = scores[:, cls_ind]
+        cls_scores = scores[:, cls_ind]        
+
         dets = np.hstack((cls_boxes,
                           cls_scores[:, np.newaxis]))#.astype(np.float32)
+
+        #get copy of dets for plotting purposes
+        bboxs = np.empty(np.shape(dets))
+        np.copyto(bboxs, dets) 
+
         keep = nms(dets, NMS_THRESH)
-        dets = dets[keep, :]
-        num_sources += vis_detections(im, cls, dets, ax, thresh=conf_thresh)
+        
+        dets = dets[keep, :] 
+        
+        if plot: 
+            num_sources += plt_detections(im, cls, dets, ax, bboxs, thresh=conf_thresh)
+            fig.subplots_adjust(top=0.85)
+        else: 
+            num_sources += vis_detections(im, cls, dets, ax, thresh=conf_thresh)
+
+        #add_to_csv(scores)
+             
+
+
         #dets = np.hstack((dets, np.ones([dets.shape[0], 1]) * cls_ind))
         # if (dets.shape[0] > 0):
         #     bbox_img.append(dets)
@@ -202,7 +354,78 @@ def demo(sess, net, im_file, vis_file, fits_fn,
     # keep_indices = range(boxes_im.shape[0])
     #num_sources = vis_detections(im, None, boxes_im[keep_indices, :], ax, thresh=conf_thresh)
 
+
     print(', found %d sources' % num_sources)
+
+    #If no sources detected plot average position of detection boxes 
+    if num_sources==0:
+        boxes = np.reshape(boxes, (cfg.TEST.RPN_POST_NMS_TOP_N,7,4))
+        bboxs = np.average(boxes,axis=1)
+        #Draw ground truth boxes
+        for i in range(len(ground_truth['act_xmin'])): 
+            ax.add_patch(
+                plt.Rectangle((ground_truth['act_xmin'][i], ground_truth['act_ymin'][i]),
+                            ground_truth['act_xmax'][i] - ground_truth['act_xmin'][i],
+                            ground_truth['act_ymax'][i] - ground_truth['act_ymin'][i], fill=False,
+                            edgecolor='gray', linewidth=2.0, linestyle='--')
+             ) 
+        #Draw proposed boxes
+        for a_box in range(np.shape(bboxs)[0]): 
+
+            bbox = bboxs[a_box, :4]
+            ax.add_patch(
+                plt.Rectangle((bbox[0], bbox[1]),
+                            bbox[2] - bbox[0],
+                            bbox[3] - bbox[1], fill=False,
+                            edgecolor=colors_2[a_box], linewidth=1.0)
+                )
+
+    ##Plot scores for each box as a grouped histogram
+    if plot: 
+        axa = fig.add_subplot(1, 2, 2)
+        barwidth = (1-0.1)/cfg.TEST.RPN_POST_NMS_TOP_N 
+        axa.set_ylim([0,1])
+        r1 = np.arange(len(scores[0,:]))
+
+        for i in range(0,int(np.shape(scores)[0])):
+            
+            axa.bar(r1, scores[i, :], color = colors_2[i], width = barwidth, label='det_' + str(i+1))
+            r1 = [x + barwidth for x in r1]
+
+        axa.set_xticks([r + 0.45 for r in range(len(scores[0,:]))])
+        axa.set_xticklabels(CLASSES[:], fontsize = 8)
+
+        #Draw horizontal line at threshold, add legend and title
+        axa.axhline(conf_thresh, linestyle='--', color='black', linewidth=1.0)
+        plt.legend(loc = 'upper right', fontsize='x-small')
+        axa.set_title('Class Scores for each Detection')
+
+        # Generate text string for ClaRAN's prediction
+        claran_text = '' 
+        for p in range(len(predict['pred_class'])):
+            claran_text += str(predict['pred_class'][p].replace('_', 'C_') + 'P ' + "{:.2f}".format(predict['score'][p])) + " "
+        ax.text(5, 20, '{:s}'.format('ClaRAN: '+ claran_text),
+                bbox=dict(facecolor='None', alpha=0.4, edgecolor='None'),
+                fontsize=8, color='black')
+
+        # Generate text string for ground truth
+        gt_text = '' 
+        for q in ground_truth['act_class']:
+            gt_text += q.replace('_', 'C_') + 'P '
+        ax.text(5,40, '{:s}'.format('Ground Truth: ' + gt_text),
+                bbox=dict(facecolor='None', alpha=0.4, edgecolor='None'),
+                fontsize=8, color='black')
+
+        plt.tight_layout() 
+        fig.subplots_adjust(top=0.85)
+    
+    plt.draw() 
+
+    # save results to CSV if ClaRAN has found a single source
+    #if num_sources == 1: 
+        
+        #dict_to_csv( dict(ground_truth.items() + predict.items()) )
+
     return 0
 
 def parse_args():
@@ -235,6 +458,8 @@ def parse_args():
     parser.add_argument('--vis-png', dest='vis_png',
                         help='full path of the visualisation png file',
                         default=None, type=str)
+    parser.add_argument('--plot', dest='plot', 
+                        help='plot bounding boxes and scores', action='store_true', default=False)
 
     args = parser.parse_args()
     if ('D1' != args.model):
@@ -296,7 +521,8 @@ def fuse_radio_ir_4_pred(radio_fn, ir_fn, out_dir='/tmp', model='D4'):
     else:
         nsz = cfg.TEST.SCALES[0] #i.e. 600
         mask_ir = True
-    return fuse(radio_fn, ir_fn, out_dir, new_size=nsz, mask_ir=mask_ir)
+    return fuse(radio_fn, ir_fn, out_dir, new_size=nsz, mask_ir=mask_ir)    
+
 
 if __name__ == '__main__':
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' #hide tensorflow warnings
@@ -331,12 +557,15 @@ if __name__ == '__main__':
     sys.stdout.write("Detecting radio sources... ")
     sys.stdout.flush()
     ret = demo(sess, net, im_file, vis_file, args.radio_fits, conf_thresh=args.conf_thresh,
-               eval_class=(not args.eval_eoi), extra_vis_png=args.vis_png is not None)
+               eval_class=(not args.eval_eoi), extra_vis_png=args.vis_png is not None, plot=args.plot)
+
     if (-1 == ret):
         print('Fail to detect in %s' % args.radio_fits)
     else:
         im_name = osp.basename(im_file)
-        output_fn = osp.join(args.fig_path, im_name.replace('.png', '_pred.png'))
+        if args.plot: end='_plot.png' 
+        else: end='_pred.png' 
+        output_fn = osp.join(args.fig_path, im_name.replace('.png', end))
         plt.savefig(output_fn, dpi=150)
         plt.close()
         print('Detection saved to %s' % output_fn)
