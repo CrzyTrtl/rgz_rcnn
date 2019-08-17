@@ -13,7 +13,7 @@ subset = "example.txt"
 #Set this to be the path to rgz_rcnn folder
 path_U = os.getcwd()
 
-with open(os.path.join(path_U, 'tools', subset)) as file:
+with open(os.path.join(path_U, subset)) as file:
     
     count = 0
     num_to_do = sum(1 for line in file if line.rstrip())
@@ -27,7 +27,7 @@ with open(os.path.join(path_U, 'tools', subset)) as file:
 
         os.chdir(path_U)
 
-        os.system("python tools/demo_new.py --radio data/FITSImages/%s.fits --ir data/rgzdemo/%s_infrared.png --plot" % (img,img))
+        os.system("python demo.py --radio ../data/FITSImages/%s.fits --ir ../data/rgzdemo/%s_infrared.png --plot" % (img,img))
         
         count += 1
         print("|DONE: | " + str(count) + '/' + str(num_to_do))
